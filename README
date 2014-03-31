@@ -1,0 +1,5 @@
+A general purpose dynamic storage allocator for C programs or in other words, my own implementation of malloc, free, realloc, and calloc.
+This implementation uses a segregated free list, stored at the beggining of the heap, to keep track of free blocks.
+All blocks are allocated with sizes of powers of 2 and a minimum block size of 32 bytes.
+
+Done as part of a homework assignment.

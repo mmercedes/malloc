@@ -246,7 +246,7 @@ void *malloc (size_t size) {
     void* p;
     int index;
 
-    //checkheap(1);  // Let's make sure the heap is ok!
+    checkheap(1);  // Let's make sure the heap is ok!
 
     if(size == 0) return NULL;
     size = get_block_size(size);
@@ -258,6 +258,7 @@ void *malloc (size_t size) {
     if(p == NULL) return NULL;
 
     p = block_mem(p);
+
     return p;
 }
 
@@ -269,6 +270,8 @@ void free (void *ptr) {
     void* block;
     int index;
 
+    checkheap(1);
+
     if (ptr == NULL) {
         return;
     }
@@ -276,10 +279,11 @@ void free (void *ptr) {
     index = coalesce(block, &size);
 
     block_mark(block, 1);
-    set_prev_pointer(block, NULL);
-    set_next_pointer(block, NULL);
+    //set_prev_pointer(block, NULL);
+    //set_next_pointer(block, NULL);
 
     add_block_to_list(index, block);
+
     return;    
 }
 
@@ -336,8 +340,39 @@ void* calloc (size_t nmemb, size_t size) {
 
 // Returns 0 if no errors were found, otherwise returns the error
 int mm_checkheap(int verbose) {
-    verbose = verbose;
-    in_heap(NULL);
+    void* current;
+    //void* prev;
+    size_t size;
+
+    for(int i = 0; i < NUM_FREE_LISTS; i++){
+        current = free_lists[i];
+        //prev = NULL;
+
+        while(current != NULL){
+            if(!in_heap(current)){
+                if(verbose) printf("HEAP ERROR: block not in heap\n");
+                return 1;
+            }
+
+            size = block_size(current);
+            if(size > MAX_SIZE){
+                if(verbose) printf("HEAP ERROR: invalid block size\n");
+                return 1;
+            }
+            /*
+            if(block_prev(current) != prev){
+                if(verbose) printf("HEAP ERROR: invalid prev pointer\n");
+                return 1;
+            }
+            */
+            if(!block_free(current)){
+                if(verbose) printf("HEAP ERROR: block in list not marked free\n");
+                return 1;
+            }
+            //prev = current;
+            current = block_next(current);
+        }
+    }
     return 0;
 }
 
@@ -412,7 +447,9 @@ static void add_block_to_list(int index, void* block){
     set_prev_pointer(block, NULL);
     set_next_pointer(block, free_lists[index]);
 
+    checkheap(1);
     if(free_lists[index] != NULL) set_prev_pointer(free_lists[index], block);
+    checkheap(1);
     free_lists[index] = block;
 }
 
@@ -484,19 +521,21 @@ static int coalesce(void* block, size_t* size){
     REQUIRES(in_heap(block));
 
     //uint64_t* left_block;
-    uint64_t* right_block;
+    void* right_block;
     size_t new_size;
     int index;
+
+    void* next;
+    void* prev;
 
     *size = block_size(block);
     new_size = (*size) * 2;
     index = get_free_list_index(*size);
 
-    if(new_size >= MAX_SIZE) return index;
+    if(new_size > MAX_SIZE) return index;
 
     right_block = ((uint64_t*)block)+(block_size(block)/sizeof(uint64_t*));
 
-    
     // if(in_heap(left_block) && block_free(left_block)){
     //     if(block_size(left_block) == size){
     //         set_size(left_block, size*2);
@@ -506,6 +545,14 @@ static int coalesce(void* block, size_t* size){
     
     if(in_heap(right_block) && block_free((uint32_t*)right_block)){
         if(block_size(right_block) == new_size/2){
+
+            next = block_next(right_block);
+            prev = block_prev(right_block);
+
+            if(free_lists[index] == right_block) free_lists[index] = next;
+            if(prev != NULL) set_next_pointer(prev, next);
+            if(next != NULL) set_prev_pointer(next, prev);
+
             set_size(block, new_size);
             *size = new_size;
             index++;
@@ -513,3 +560,4 @@ static int coalesce(void* block, size_t* size){
     }
     return index;
 }
+

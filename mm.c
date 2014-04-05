@@ -65,9 +65,8 @@
  * ----------------
  */
 
- #define HEADER_SIZE 12
- #define FOOTER_SIZE 12
- #define PADDING_SIZE 4
+ #define HEADER_SIZE 24
+ #define FOOTER_SIZE 8
  #define NUM_FREE_LISTS 25
  #define MAX_SIZE 0x3FFFFFFF
 
@@ -96,7 +95,6 @@ static int in_heap(void* p) {
 static size_t get_block_size(size_t size){
     size--;
     size += HEADER_SIZE;
-    size += PADDING_SIZE;
     size += FOOTER_SIZE;
     size |= size >> 1;
     size |= size >> 2;
@@ -146,15 +144,15 @@ static inline void* block_mem(uint64_t* block) {
     REQUIRES(in_heap(block));
     REQUIRES(aligned(block + 2));
 
-    return (void*)(block+2);
+    return (void*)(block+3);
 }
 
 // Return the pointer to the previous block
-static inline void* block_prev(uint32_t* block) {
+static inline void* block_prev(uint64_t* block) {
     REQUIRES(block != NULL);
     REQUIRES(in_heap(block));
 
-    return (void*)(*((uint64_t*)(block+1)));
+    return (void*)(*(block+1));
 }
 
 // Return the pointer to the next block
@@ -162,21 +160,21 @@ static inline void* block_next(uint64_t* block) {
     REQUIRES(block != NULL);
     REQUIRES(in_heap(block));
 
-    return (void*)(*(block+(block_size(block)/sizeof(uint64_t*))-1));
+    return (void*)(*(block+2));
 }
 
 static inline void set_prev_pointer(uint64_t* block, uint64_t* p){
     REQUIRES(block != NULL);
     REQUIRES(in_heap(block));
 
-    *(uint64_t**)(((uint32_t*)block)+1) = p;
+    *(uint64_t**)(block+1) = p;
 }
 
 static inline void set_next_pointer(uint64_t* block, uint64_t* p){
     REQUIRES(block != NULL);
     REQUIRES(in_heap(block));
 
-    *(uint64_t**)(block+(block_size(block)/sizeof(uint64_t*))-1) = p;    
+    *(uint64_t**)(block+2) = p;   
 }
 
 static inline void set_size(uint32_t* block, size_t size){
@@ -184,13 +182,14 @@ static inline void set_size(uint32_t* block, size_t size){
     REQUIRES(in_heap(block));
 
     *block = size & 0x3FFFFFFF;
+    *(block + block_size(block)/sizeof(uint32_t*) - 1) = size & 0x3FFFFFFF;
 }
 
 // returns the header of a block from a pointer malloc returned
 static inline void* block_from_ptr(uint64_t* ptr){
     REQUIRES(ptr != NULL);
 
-    return (void*)(ptr - 2);
+    return (void*)(ptr - 3);
 }
 
 static int get_free_list_index(size_t size);
@@ -199,7 +198,6 @@ static void* allocate_block(size_t size);
 static void* split_block(int index);
 static void remove_block_from_list(int index);
 static void add_block_to_list(int index, void* block);
-//static void move_block(int start, int end);
 static int coalesce(void* block, size_t* size);
 
 
@@ -210,7 +208,6 @@ static int coalesce(void* block, size_t* size);
 
  void** free_lists;
  void* heap_start;
- //void* heap_end;
 
 /*
  *  Malloc Implementation
@@ -314,7 +311,7 @@ void* realloc(void *oldptr, size_t size) {
 
       /* Copy the old data. */
     oldsize = block_size(block_from_ptr(oldptr));
-    oldsize = oldsize - (HEADER_SIZE + FOOTER_SIZE + PADDING_SIZE);
+    oldsize = oldsize - (HEADER_SIZE + FOOTER_SIZE);
     if(size < oldsize) oldsize = size;
 
     newptr = memmove(newptr, oldptr, oldsize);
@@ -351,6 +348,7 @@ int mm_checkheap(int verbose) {
         while(current != NULL){
             if(!in_heap(current)){
                 if(verbose) printf("HEAP ERROR: block not in heap\n");
+                printf("CURRENT: %p\n", current);
                 return 1;
             }
 
@@ -447,9 +445,7 @@ static void add_block_to_list(int index, void* block){
     set_prev_pointer(block, NULL);
     set_next_pointer(block, free_lists[index]);
 
-    checkheap(1);
     if(free_lists[index] != NULL) set_prev_pointer(free_lists[index], block);
-    checkheap(1);
     free_lists[index] = block;
 }
 
@@ -482,23 +478,6 @@ static void* split_block(int index){
     return block;
 }
 
-/*
-// moves first block from free_lists[start] to start of free_lists[end] 
-static void move_block(int start, int end){
-    REQUIRES(0 <= start && start < NUM_FREE_LISTS);
-    REQUIRES(0 <= end && end < NUM_FREE_LISTS);
-
-    void* b;
-
-    b = free_lists[start];
-    free_lists[start] = block_next(free_lists[start]);
-    set_prev_pointer(free_lists[start], NULL);
-    set_next_pointer(b, free_lists[end]);
-    set_prev_pointer(free_lists[end], b);
-    free_lists[end] = b;
-}
-*/
-
 static void* allocate_block(size_t size){
 
     void* block;
@@ -511,9 +490,6 @@ static void* allocate_block(size_t size){
     block_mark(block, 0);
     return block;
 }
-
-
-
 
 
 static int coalesce(void* block, size_t* size){

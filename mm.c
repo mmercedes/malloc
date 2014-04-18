@@ -65,7 +65,7 @@
  * ----------------
  */
 
- #define HEADER_SIZE 24
+ #define HEADER_SIZE 8
  #define FOOTER_SIZE 8
  #define NUM_FREE_LISTS 24
  #define MIN_SIZE 40  // (HEADER + FOOTER + 8)
@@ -132,7 +132,7 @@ static inline void* block_mem(uint64_t* block) {
     REQUIRES(aligned(block));
     REQUIRES(aligned(block + 3));
 
-    return (void*)(block+3);
+    return (void*)(block+1);
 }
 
 // Return the pointer to the previous block
@@ -177,13 +177,13 @@ static inline void set_size(uint32_t* block, size_t size){
 static inline void* block_from_ptr(uint64_t* ptr){
     REQUIRES(ptr != NULL);
 
-    return (void*)(ptr - 3);
+    return (void*)(ptr - 1);
 }
 
 static int get_free_list_index(size_t size);
 static void* find_free_block(int index, size_t size);
 static void* allocate_block(size_t size);
-static void* split_block(int index, size_t request_size);
+static void* split_block(void* p, size_t request_size);
 static void remove_block_from_list(void* block);
 static void add_block_to_list(int index, void* block);
 static int coalesce(void** block);
@@ -239,6 +239,8 @@ void *malloc (size_t size) {
     if(size == 0) return NULL;
 
     size += 8 - size%8;
+    if(size < 16) size += 8;
+
     size += (HEADER_SIZE + FOOTER_SIZE);
 
     if(size > MAX_SIZE) return NULL;
@@ -379,34 +381,12 @@ int mm_checkheap(int verbose) {
 //                          HELPER FUNCTIONS                                 //
 ///////////////////////////////////////////////////////////////////////////////
 
-// Calculate the nearest (rounding up) power of 2
-// This determines which free list a block is added to
-// static size_t nearest_power_2(size_t size){
-//     size--;
-//     size |= size >> 1;
-//     size |= size >> 2;
-//     size |= size >> 4;
-//     size |= size >> 8;
-//     size |= size >> 16;
-//     size += 1;
-//     return size;
-// }
 
 // Returns the index for a free list with a block to fit the size request
 static int get_free_list_index(size_t size){
     REQUIRES(0 < size && size <= 0x3FFFFFFF);
 
     int index = 0;
-
-    //size = nearest_power_2(size);
-
-    // size--;
-    // size |= size >> 1;
-    // size |= size >> 2;
-    // size |= size >> 4;
-    // size |= size >> 8;
-    // size |= size >> 16;
-    // size += 1;
 
     // calculate log base 2
     while (size >>= 1) index++;
@@ -423,33 +403,27 @@ static void* find_free_block(int index, size_t size){
     REQUIRES(0 <= index && index < NUM_FREE_LISTS);
 
     void* block = NULL;
-    void* current;
-    int new_index = index; 
+    void* current; 
 
-    while(new_index < NUM_FREE_LISTS){
-    	current = free_lists[new_index];
+    while(index < NUM_FREE_LISTS){
+    	current = free_lists[index];
 
     	while(current != NULL){
     		if(block_size(current) >= size){
-    			if(new_index > index){
-    				block = split_block(new_index, size);
-    				block_mark(block, 0);
-    				return block;
-    			}
-    			block = current;
-    			remove_block_from_list(block);
+    			block = split_block(current, size);
     			block_mark(block, 0);
     			return block;
     		}
     		current = block_next(current);
     	}
-        new_index++;
+        index++;
     }
     block = allocate_block(size);
 
     ENSURES(block != NULL);
     return block;
 }
+
 
 
 static void remove_block_from_list(void* block){
@@ -464,9 +438,6 @@ static void remove_block_from_list(void* block){
 
     if(prev != NULL) set_next_pointer(prev, next);
     if(next != NULL) set_prev_pointer(next, prev);
-
-    //set_next_pointer(block, NULL);
-    //set_prev_pointer(block, NULL);
 }
 
 
@@ -486,12 +457,11 @@ static void add_block_to_list(int index, void* block){
 // moves split piece to correct free list
 // returns a pointer to the block that was split
 
-static void* split_block(int index, size_t request_size){
-    REQUIRES(0 <= index && index < NUM_FREE_LISTS);
+static void* split_block(void* p, size_t request_size){
+	REQUIRES(p != NULL);
 
-    size_t b_size = block_size(free_lists[index]);
+    size_t b_size = block_size(p);
     size_t split_size = b_size - request_size;
-    void* p = free_lists[index];
     void* split;
     int new_index;
 
@@ -503,8 +473,6 @@ static void* split_block(int index, size_t request_size){
 
     set_size(p, request_size);
     set_size(split, split_size);
-    //set_prev_pointer(p, NULL);
-    //set_next_pointer(p, NULL);
 
     block_mark(split, 1);
     new_index = get_free_list_index(split_size);   
@@ -518,9 +486,8 @@ static void* allocate_block(size_t size){
     
     block = mem_sbrk(size);
     if(block == (void*) -1) return NULL;
+
     set_size(block, size);
-    //set_prev_pointer(block, NULL);
-    //set_next_pointer(block, NULL);
     block_mark(block, 0);
 
     return block;
@@ -537,8 +504,6 @@ static int coalesce(void** block){
     size_t size = block_size(*block);
     size_t new_size = size;
     int index;
-
-    //return get_free_list_index(block_size(*block));
 
     right_block = ((uint64_t*)*block)+(block_size(*block)/sizeof(uint64_t*));
 
